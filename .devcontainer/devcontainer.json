@@ -1,0 +1,12 @@
+{
+  "name": "PocketIDE",
+  "forwardPorts": [8080],
+  "portsAttributes": {
+    "8080": {
+      "label": "PocketIDE Server",
+      "visibility": "public"
+    }
+  },
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y tmux",
+  "postStartCommand": "nohup node server.js > server.log 2>&1 &"
+}
