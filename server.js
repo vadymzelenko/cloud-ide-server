@@ -6,6 +6,8 @@ const express = require('express'), multer = require('multer'), rateLimit = requ
 const { WebSocketServer } = require('ws');
 const pty = require('node-pty');
 const { createProxyMiddleware } = require('http-proxy-middleware');
+const chokidar = require('chokidar');
+const pocket = require('./pocket');
 
 const PORT = +process.env.PORT || 8080;
 const TOKEN = process.env.AUTH_TOKEN || '';
@@ -44,6 +46,14 @@ async function walk(dir, depth = 0) {
       : { name: e.name, path: rel, type: 'file' });
   }
   return out;
+}
+
+// атомарная запись: tmp + fsync + rename — файл не останется «наполовину записанным»
+async function writeAtomic(f, data) {
+  const st = await fs.stat(f).catch(() => null), tmp = `${f}.pi-tmp-${process.pid}`;
+  const fh = await fs.open(tmp, 'w', st ? st.mode & 0o777 : 0o644);
+  try { await fh.writeFile(data); await fh.sync(); } finally { await fh.close(); }
+  await fs.rename(tmp, f);
 }
 
 const app = express();
@@ -89,7 +99,7 @@ api.post('/fs/write', async (q, r) => {
   const f = safe(q.body.path);
   if (f === ROOT || typeof q.body.content !== 'string') throw httpErr(400, 'Некорректный запрос');
   await fs.mkdir(path.dirname(f), { recursive: true });
-  await fs.writeFile(f, q.body.content);
+  await writeAtomic(f, q.body.content);
   r.json({ ok: true });
 });
 api.post('/fs/create', async (q, r) => {
@@ -121,6 +131,17 @@ api.get('/fs/download', async (q, r) => {
   r.download(f, path.basename(f), { dotfiles: 'allow' });
 });
 
+// ---------- турбоархив: весь проект (или папка) в одном JSON.gz ----------
+api.get('/archive', async (q, r) => {
+  const dir = safe(q.query.dir), plain = q.query.plain === '1';
+  r.type(plain ? 'application/json' : 'application/gzip');
+  try { await pocket.pack(r, dir, { name: path.basename(dir), gzip: !plain }); } catch (e) { r.destroy(e); }
+});
+api.post('/archive/import', upload.single('file'), async (q, r) => {
+  if (!q.file) throw httpErr(400, 'Нет файла');
+  try { r.json(await pocket.unpack(q.file.buffer, safe(q.query.dir))); } catch (e) { throw httpErr(400, e.message); }
+});
+
 const tmux = (...a) => new Promise(res => execFile('tmux', a, (e, out) => res(e ? '' : out)));
 api.get('/term', async (q, r) =>
   r.json((await tmux('ls', '-F', '#{session_name}')).split('\n').filter(s => /^pocketide-\d+$/.test(s)).map(s => +s.slice(10))));
@@ -130,6 +151,24 @@ api.delete('/term/:id', async (q, r) => {
   r.json({ ok: true });
 });
 app.use('/api', api);
+
+// ---------- автообновление дерева: watcher -> SSE ----------
+const sse = new Set();
+let bumpT;
+const bump = () => { clearTimeout(bumpT); bumpT = setTimeout(() => sse.forEach(r => r.write('data: tree\n\n')), 300); };
+chokidar.watch(ROOT, {
+  ignoreInitial: true, followSymlinks: false,
+  ignored: p => { const rel = path.relative(ROOT, p); return rel.split(path.sep).some(s => IGNORE.has(s)) || rel.includes('.pi-tmp-'); },
+}).on('all', ev => /^(add|unlink)(Dir)?$/.test(ev) && bump()).on('error', () => {});
+app.get('/events', (q, r) => {
+  if (!ok(q.query.token)) return r.status(401).end();
+  r.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+  r.flushHeaders();
+  r.write('retry: 3000\n\n');
+  sse.add(r);
+  const ka = setInterval(() => r.write(': ka\n\n'), 25_000);
+  q.on('close', () => { clearInterval(ka); sse.delete(r); });
+});
 
 // ---------- статика (Next.js export) ----------
 app.use(express.static(path.join(__dirname, 'web', 'out')));

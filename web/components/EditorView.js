@@ -1,6 +1,7 @@
 'use client';
 import CodeMirror from '@uiw/react-codemirror';
-import { EditorView as CMView } from '@codemirror/view';
+import { EditorView as CMView, keymap } from '@codemirror/view';
+import { indentWithTab } from '@codemirror/commands';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { javascript } from '@codemirror/lang-javascript';
 import { python } from '@codemirror/lang-python';
@@ -22,7 +23,7 @@ const theme = CMView.theme({
 
 export default function EditorView({ path, value, onChange }) {
   const ext = path.split('.').pop().toLowerCase();
-  const extensions = [CMView.lineWrapping, theme, ...(LANG[ext] ? [LANG[ext]()] : [])];
+  const extensions = [CMView.lineWrapping, theme, keymap.of([indentWithTab]), ...(LANG[ext] ? [LANG[ext]()] : [])];
   return (
     <CodeMirror key={path} value={value} height="100%" className="h-full" theme={oneDark}
       extensions={extensions} onChange={onChange} basicSetup={{ foldGutter: false }} />

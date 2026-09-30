@@ -10,6 +10,8 @@ const DELAYS = [1000, 2000, 5000];
 export default function TerminalView({ id, active, onStatus }) {
   const box = useRef();
   const R = useRef({});
+  const act = useRef(active);
+  act.current = active;
 
   useEffect(() => {
     let dead = false, ws, term, ro, timer, retry = 0;
@@ -23,6 +25,7 @@ export default function TerminalView({ id, active, onStatus }) {
       term.loadAddon(fit);
       term.open(box.current);
       R.current.term = term;
+      if (act.current && box.current.offsetParent) term.focus();
       term.onData(d => send({ type: 'input', data: d }));
       const doFit = () => { if (box.current.clientWidth > 0) { fit.fit(); send({ type: 'resize', cols: term.cols, rows: term.rows }); } };
       ro = new ResizeObserver(doFit);

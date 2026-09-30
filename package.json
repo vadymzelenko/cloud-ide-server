@@ -2,13 +2,18 @@
   "name": "pocketide",
   "version": "1.0.0",
   "private": true,
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "setup": "pnpm install && pnpm run build",
-    "build": "pnpm -C web install && pnpm -C web run build",
-    "start": "node server.js"
+    "setup": "npm install && npm run build",
+    "build": "npm --prefix web install && npm --prefix web run build",
+    "start": "node server.js",
+    "pack": "node pocket.js pack",
+    "unpack": "node pocket.js unpack"
   },
   "dependencies": {
+    "chokidar": "^3.6.0",
     "dotenv": "^16.4.5",
     "express": "^5.1.0",
     "express-rate-limit": "^7.5.0",

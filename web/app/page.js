@@ -1,9 +1,10 @@
 'use client';
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Code2, Terminal as TermIcon, Globe, Menu, Save, Plus, X, RotateCw, LogOut } from 'lucide-react';
+import { Code2, Terminal as TermIcon, Globe, Menu, Save, Plus, X, RotateCw, LogOut, Keyboard } from 'lucide-react';
 import { api, getToken, setToken, clearToken } from '../lib/api';
 import FileTree from '../components/FileTree';
+import MouseKeys from '../components/MouseKeys';
 
 const EditorView = dynamic(() => import('../components/EditorView'), { ssr: false });
 const TerminalView = dynamic(() => import('../components/TerminalView'), { ssr: false });
@@ -11,6 +12,11 @@ const TerminalView = dynamic(() => import('../components/TerminalView'), { ssr: 
 const TABS = [['editor', 'Editor', Code2], ['terminal', 'Terminal', TermIcon], ['preview', 'Preview', Globe]];
 const DOT = { online: 'bg-accent', connecting: 'bg-yellow-400', reconnecting: 'bg-yellow-400', offline: 'bg-red-500' };
 const LABEL = { online: 'Online', connecting: 'Connecting', reconnecting: 'Reconnecting', offline: 'Offline' };
+
+const HELP = [['Alt+1 / 2 / 3', 'Editor / Terminal / Preview'], ['Alt+0', 'Дерево файлов: ↑↓ ←→ Enter Delete'],
+  ['Ctrl/Cmd+S', 'Сохранить'], ['Alt+Shift+F / D', 'Новый файл / папка'], ['Alt+Shift+T / W', 'Новый / закрыть терминал'],
+  ['Alt+Shift+← →', 'Соседний терминал'], ['Alt+Shift+R', 'Перезагрузить Preview'], ['Alt+Shift+A', 'Скачать архив (выбранная папка или всё)'],
+  ['Alt+Shift+M', 'Курсор-мышь на стрелках'], ['Alt+/ , Esc', 'Эта справка']];
 
 function Login({ onDone }) {
   const [v, setV] = useState(''), [err, setErr] = useState('');
@@ -47,6 +53,9 @@ function Ide({ onLogout }) {
   const S = useRef({});
   S.current = { path, doc, dirty };
   const touch = useRef(null);
+  const [help, setHelp] = useState(false);
+  const [mk, setMk] = useState(false);
+  const A = useRef({});
 
   const onStatus = useCallback((id, s) => setSt(x => ({ ...x, [id]: s })), []);
   const refresh = useCallback(() => api('/fs/tree').then(setTree).catch(e => e.status === 401 && onLogout()), [onLogout]);
@@ -83,11 +92,12 @@ function Ide({ onLogout }) {
     return () => clearTimeout(t);
   }, [doc, dirty, save]);
 
-  const open = async p => {
+  const open = async (p, byKey) => {
     await save();
     try {
       const t = await api('/fs/read?path=' + encodeURIComponent(p));
       setPath(p); setDoc(t); setDirty(false); setDrawer(false); setTab('editor');
+      if (byKey) focusPane('editor');
     } catch (e) { alert(e.message); }
   };
   const onDeleted = p => { if (path && (path === p || path.startsWith(p + '/'))) { setPath(null); setDirty(false); } };
@@ -98,6 +108,57 @@ function Ide({ onLogout }) {
     setTerms(rest); if (at === id) setAt(rest[0]);
     api('/term/' + id, { method: 'DELETE' }).catch(() => {});
   };
+
+  const focusPane = t => setTimeout(() => {
+    if (t === 'editor') document.querySelector('.cm-content')?.focus();
+    else if (t === 'terminal') [...document.querySelectorAll('.xterm-helper-textarea')].find(x => x.offsetParent)?.focus();
+    else document.getElementById('port')?.focus();
+  }, 60);
+  const goTab = t => { setTab(t); setDrawer(false); focusPane(t); };
+  A.current = { goTab, addTerm, closeTerm, terms, at, setAt, setPk, setDrawer, setHelp, setMk };
+
+  // дерево обновляется само: сервер шлёт событие при любых изменениях файлов (в т.ч. из терминала)
+  useEffect(() => {
+    const es = new EventSource('/events?token=' + encodeURIComponent(getToken()));
+    es.onopen = es.onmessage = () => refresh();
+    return () => es.close();
+  }, [refresh]);
+  // надёжность: сохраняем при сворачивании вкладки и предупреждаем о закрытии с несохранённым
+  useEffect(() => {
+    const v = () => document.visibilityState === 'hidden' && save();
+    document.addEventListener('visibilitychange', v);
+    return () => document.removeEventListener('visibilitychange', v);
+  }, [save]);
+  useEffect(() => {
+    if (!dirty) return;
+    const h = e => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', h);
+    return () => window.removeEventListener('beforeunload', h);
+  }, [dirty]);
+  // горячие клавиши (по e.code — работают и на Mac с Option); capture, чтобы не уходили в терминал
+  useEffect(() => {
+    const h = e => {
+      if (e.key === 'Escape' && help) return setHelp(false);
+      if (!e.altKey || e.ctrlKey || e.metaKey) return;
+      const a = A.current, c = e.code, sh = e.shiftKey, ev = (n, d) => () => window.dispatchEvent(new CustomEvent(n, { detail: d }));
+      const tabs = { Digit1: 'editor', Digit2: 'terminal', Digit3: 'preview' };
+      let run;
+      if (!sh && tabs[c]) run = () => a.goTab(tabs[c]);
+      else if (!sh && c === 'Digit0') run = () => { a.setDrawer(true); setTimeout(() => document.getElementById('tree')?.focus(), 60); };
+      else if (!sh && c === 'Slash') run = () => a.setHelp(v => !v);
+      else if (sh && c === 'KeyF') run = ev('pi:new', 'file');
+      else if (sh && c === 'KeyD') run = ev('pi:new', 'directory');
+      else if (sh && c === 'KeyA') run = ev('pi:archive');
+      else if (sh && c === 'KeyT') run = () => { a.addTerm(); a.goTab('terminal'); };
+      else if (sh && c === 'KeyW') run = () => a.closeTerm(a.at);
+      else if (sh && (c === 'ArrowLeft' || c === 'ArrowRight')) run = () => { const i = a.terms.indexOf(a.at); a.setAt(a.terms[(i + (c === 'ArrowRight' ? 1 : a.terms.length - 1)) % a.terms.length]); };
+      else if (sh && c === 'KeyR') run = () => a.setPk(k => k + 1);
+      else if (sh && c === 'KeyM') run = () => a.setMk(v => !v);
+      if (run) { e.preventDefault(); e.stopPropagation(); run(); }
+    };
+    window.addEventListener('keydown', h, true);
+    return () => window.removeEventListener('keydown', h, true);
+  }, [help]);
 
   const pane = 'min-h-0 flex-col';
   const status = st[at] || 'connecting';
@@ -119,6 +180,7 @@ function Ide({ onLogout }) {
           <Save size={18} />
           <span className={`h-2 w-2 rounded-full ${dirty ? 'bg-yellow-400' : 'bg-accent'}`} title={dirty ? 'Не сохранено' : 'Сохранено'} />
         </button>
+        <button onClick={() => setHelp(true)} title="Горячие клавиши (Alt+/)" className="grid h-9 w-9 place-items-center text-zinc-400"><Keyboard size={18} /></button>
         <button onClick={onLogout} title="Выйти" className="grid h-9 w-9 place-items-center text-zinc-400"><LogOut size={18} /></button>
       </header>
 
@@ -136,7 +198,7 @@ function Ide({ onLogout }) {
 
           <section className={`${pane} ${tab === 'preview' ? 'flex' : 'hidden'} lg:${tab === 'preview' ? 'flex' : 'hidden'} lg:border-r lg:border-line`}>
             <div className="flex shrink-0 items-center gap-1 border-b border-line p-1">
-              <input type="number" value={port} onChange={e => setPort(+e.target.value || 0)} className="h-9 w-20 rounded border border-line bg-bg px-2 text-base outline-none" />
+              <input id="port" type="number" value={port} onChange={e => setPort(+e.target.value || 0)} onKeyDown={e => e.key === 'Enter' && setPk(k => k + 1)} className="h-9 w-20 rounded border border-line bg-bg px-2 text-base outline-none" />
               {[3000, 8000, 5173].map(p => <button key={p} onClick={() => { setPort(p); setPk(k => k + 1); }} className="h-9 rounded bg-line px-2 text-sm">{p}</button>)}
               <button onClick={() => setPk(k => k + 1)} className="grid h-9 w-9 place-items-center"><RotateCw size={16} /></button>
             </div>
@@ -165,6 +227,15 @@ function Ide({ onLogout }) {
           </button>
         ))}
       </nav>
+      <MouseKeys on={mk} onExit={() => setMk(false)} />
+      {help && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4" onClick={() => setHelp(false)}>
+          <div tabIndex={-1} ref={el => el?.focus()} onClick={e => e.stopPropagation()} className="w-full max-w-md space-y-1 rounded-lg border border-line bg-panel p-4 text-sm outline-none">
+            <h2 className="mb-2 font-semibold">Горячие клавиши</h2>
+            {HELP.map(([k, d]) => <div key={k} className="flex justify-between gap-4"><kbd className="whitespace-nowrap text-accent">{k}</kbd><span className="text-right text-zinc-300">{d}</span></div>)}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
