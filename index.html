@@ -43,7 +43,8 @@
     </div>
 
     <!-- Кнопка запуска -->
-    <a href="https://redesigned-enigma-gj95xv4jx7ghvgq6.github.dev/?autoStart=true" 
+   <!-- Убрали ссылку из href, перенесли логику в JS -->
+    <a href="#" 
        id="start-btn" 
        onclick="handleStart(event)" 
        class="flex items-center justify-center w-full py-3 px-4 bg-white text-black font-medium rounded-lg hover:bg-neutral-200 transition-all duration-200">
@@ -60,13 +61,16 @@
     lucide.createIcons();
 
     function handleStart(event) {
+      // 1. Блокируем мгновенный переход браузера
+      event.preventDefault(); 
+
       const btn = document.getElementById('start-btn');
       const helper = document.getElementById('helper-text');
       const dot = document.getElementById('dot');
       const ping = document.getElementById('ping');
       const statusText = document.getElementById('status-text');
 
-      // Меняем состояние UI
+      // 2. Включаем UI загрузки
       btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 mr-2 animate-spin"></i><span>Waking up...</span>';
       btn.classList.add('opacity-70', 'cursor-not-allowed', 'pointer-events-none');
       lucide.createIcons();
@@ -78,9 +82,12 @@
       statusText.innerText = 'Booting';
       statusText.classList.replace('text-neutral-500', 'text-amber-500');
 
-      // Кнопка тега <a> сама выполнит переход по href. 
-      // При переходе GitHub перехватит загрузку и покажет свой экран запуска сервера.
+      // 3. Ждем 1.5 секунды для красивого визуала и отправляем в облачную IDE
+      setTimeout(() => {
+        window.location.href = 'https://redesigned-enigma-gj95xv4jx7ghvgq6.github.dev/?autoStart=true';
+      }, 1500);
     }
   </script>
+  
 </body>
 </html>
